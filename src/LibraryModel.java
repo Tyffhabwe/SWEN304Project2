@@ -5,14 +5,46 @@
  */
 
 import javax.swing.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 
 public class LibraryModel {
-
+    //Credentials
+    String url = "jdbc:postgresql://localhost:5433/LibraryDB";
+    String user = "postgres";
+    String password = "";
+    Connection connection = null;
     // For use in creating dialogs and making them modal
     private JFrame dialogParent;
 
     public LibraryModel(JFrame parent, String userid, String password) {
-	dialogParent = parent;
+	    dialogParent = parent;
+        try {
+            Class.forName("org.postgresql.Driver");
+
+            connection = DriverManager.getConnection(url, user, password);
+
+            if (connection != null) {
+                System.out.println("Successful connection to DB!");
+            } else {
+                System.out.println("Failed to connect to DB.");
+            }
+        } catch (ClassNotFoundException e) {
+            System.out.println("PostgeSQL JDBC Driver was not found");
+            e.printStackTrace();
+        } catch (SQLException e) {
+            System.out.println("DB Connection failed.");
+            e.printStackTrace();
+        } finally {
+            if (connection!= null) {
+                try {
+                    connection.close();
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     public String bookLookup(int isbn) {
