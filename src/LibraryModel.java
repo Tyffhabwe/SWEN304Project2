@@ -175,12 +175,21 @@ public class LibraryModel {
             while(resultSet.next()) {
                 authorname = resultSet.getString(Constants.AUTHOR_NAME).trim()
                         + " " + resultSet.getString(Constants.AUTHOR_SURNAME).trim();
-                booksWritten.add(
-                        resultSet.getInt(Constants.BOOK_ISBN)
-                        + " - "
-                        + resultSet.getString(Constants.BOOK_TITLE)
-                );
+                String bookStuff = resultSet.getInt(Constants.BOOK_ISBN)
+                            + " - "
+                            + resultSet.getString(Constants.BOOK_TITLE);
+
+                if (resultSet.getString(Constants.BOOK_TITLE) == null) bookStuff = "(no books written)";
+
+                booksWritten.add(bookStuff);
             }
+
+            builder.append('\t').append(authorID)
+                    .append(" - ").append(authorname).append('\n')
+                    .append("\tBooks written: \n");
+
+            for (String bookStuff: booksWritten) builder.append("\t\t").append(bookStuff).append('\n');
+
         } catch (SQLException e) {
             System.out.println("Could not look up that authorID");
             closeDBConnection();
