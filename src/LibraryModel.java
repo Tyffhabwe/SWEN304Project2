@@ -6,6 +6,7 @@
 
 import javax.swing.*;
 import java.sql.*;
+import java.util.*;
 
 public class LibraryModel {
     //Credentials
@@ -33,13 +34,121 @@ public class LibraryModel {
             e.printStackTrace();
         }
     }
-
     public String bookLookup(int isbn) {
-	    return "Lookup Book Stub";
+        StringBuilder result = new StringBuilder("Lookup Book Stub");
+        String sql = "SELECT * FROM book\n" +
+                "LEFT OUTER JOIN book_author\n" +
+                "ON book.isbn = book_author.isbn\n" +
+                "LEFT OUTER JOIN author\n" +
+                "ON book_author.authorid = author.authorid\n" +
+                "WHERE book.isbn = + " + isbn + "\n" +
+                "ORDER BY authorseqno";
+
+        try(Statement statement = connection.createStatement()) {
+            String booktitle = "bookTitle";
+            int edition_no = -1;
+            int numcopies = -1;
+            int numleft = -1;
+            List<String> authors = new ArrayList<>();
+
+            ResultSet resultSet = statement.executeQuery(sql);
+            result.setLength(0);
+            result.append("Book Lookup:\n").append("\t").append(isbn).append(": ");
+
+            while (resultSet.next()) {
+                booktitle = resultSet.getString(Constants.BOOK_TITLE);
+                edition_no = resultSet.getInt(Constants.BOOK_EDITION_NUM);
+                numcopies = resultSet.getInt(Constants.BOOK_NUMBER_COPIES);
+                numleft = resultSet.getInt(Constants.BOOK_NUM_LEFT);
+                authors.add(resultSet.getString(Constants.AUTHOR_SURNAME).trim());
+            }
+
+            result.append(booktitle).append('\n')
+                    .append("\tEdition: ").append(edition_no)
+                    .append(" - Number of copies: ").append(numcopies)
+                    .append(" - Copies left: ").append(numleft).append('\n');
+
+            if (authors.isEmpty()) {
+                result.append("(no authors)");
+            } else {
+                result.append("\tAuthors: ").append(String.join(", ", authors));
+            }
+
+            return  result.toString();
+        } catch (SQLException e) {
+            System.out.println("Could not look up that isbn");
+            closeDBConnection();
+            e.printStackTrace();
+        }
+
+        return result.toString();
     }
 
     public String showCatalogue() {
-	    return "Show Catalogue Stub";
+        String sql = "SELECT book.isbn, book.title, book.edition_no, book.numofcop, book.numleft, surname, authorseqno FROM book\n" +
+                "LEFT OUTER JOIN book_author\n" +
+                "ON book.isbn = book_author.isbn\n" +
+                "LEFT OUTER JOIN author\n" +
+                "ON book_author.authorid = author.authorid\n" +
+                "ORDER BY book.isbn;\n";
+        StringBuilder builder = new StringBuilder("Show Catalogue Stub");
+        Map<Integer, CatalogueInformation> catalogueInfo = new HashMap<>();
+
+        try(Statement statement = connection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(sql);
+            builder.setLength(0);
+
+            while (resultSet.next()) {
+                String title = resultSet.getString(Constants.BOOK_TITLE);
+                int isbn = resultSet.getInt(Constants.BOOK_ISBN);
+                int editionNo = resultSet.getInt(Constants.BOOK_EDITION_NUM);
+                int numofcop = resultSet.getInt(Constants.BOOK_NUMBER_COPIES);
+                int numleft = resultSet.getInt(Constants.BOOK_NUM_LEFT);
+
+                CatalogueInformation catalogueInformation = catalogueInfo.getOrDefault(isbn,
+                        new CatalogueInformation(title, editionNo, numofcop, numleft,
+                                new ArrayList<>()));
+
+
+                String authorSurname = resultSet.getString(Constants.AUTHOR_SURNAME);
+                if (authorSurname == null) authorSurname = "(no authors)";
+
+                int authorseqno = resultSet.getInt(Constants.AUTHOR_AUTHORSEQNO);
+                catalogueInformation.authors().add(new Author(authorSurname, authorseqno));
+
+                catalogueInfo.put(isbn, catalogueInformation);
+            }
+
+            catalogueInfo.entrySet().stream()
+                    .sorted(Comparator.comparingInt(Map.Entry::getKey))
+                    .forEach(
+                    entry -> {
+                        CatalogueInformation info = entry.getValue();
+                        int isbn = entry.getKey();
+                        builder.append(isbn).append(": ").append(info.title()).append('\n');
+                        builder.append("\tEdition: ").append(info.editionNo())
+                                .append(" - Number of copies: ").append(info.numofcop())
+                                .append(" - Copies left: ").append(info.numleft()).append('\n');
+
+                        List<String> authorNames = info.authors().stream()
+                                .sorted(Comparator.comparingInt(Author::authorseqno))
+                                .map(Author::surname)
+                                .map(String::trim)
+                                .toList();
+
+                        builder.append("\tAuthors: ")
+                                .append(String.join(", ", authorNames))
+                                .append('\n');
+                    }
+            );
+
+            resultSet.close();
+        } catch (SQLException e) {
+            System.out.println("Failed to show the full catalogue");
+            closeDBConnection();
+            e.printStackTrace();
+        }
+	    return builder.toString();
     }
 
     public String showLoanedBooks() {
@@ -52,7 +161,6 @@ public class LibraryModel {
     public String showAllAuthors() {
         String sql = "SELECT " + Constants.AUTHOR_NAME + ", " + Constants.AUTHOR_SURNAME + " FROM author";
         StringBuilder allAuthors = new StringBuilder("Show All Authors Stub");
-
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
             allAuthors.setLength(0);
@@ -129,9 +237,17 @@ public class LibraryModel {
     }
 }
 
+record CatalogueInformation(String title, int editionNo, int numofcop, int numleft, List<Author> authors) {}
+record Author(String surname, int authorseqno) {}
 class Constants {
     public static final String AUTHOR_NAME = "name";
     public static final String AUTHOR_SURNAME = "surname";
+    public static final String AUTHOR_AUTHORSEQNO = "authorseqno";
     public static final String CUSTOMER_LAST_NAME = "l_name";
     public static final String CUSTOMER_FIRST_NAME = "f_name";
+    public static final String BOOK_ISBN = "isbn";
+    public static final String BOOK_TITLE = "title";
+    public static final String BOOK_EDITION_NUM = "edition_no";
+    public static final String BOOK_NUMBER_COPIES = "numofcop";
+    public static final String BOOK_NUM_LEFT = "numleft";
 }
