@@ -34,6 +34,7 @@ public class LibraryModel {
             e.printStackTrace();
         }
     }
+    //todo: FIX -1 SEARCH
     public String bookLookup(int isbn) {
         StringBuilder result = new StringBuilder("Lookup Book Stub");
         String sql = "SELECT * FROM book\n" +
@@ -154,9 +155,39 @@ public class LibraryModel {
     public String showLoanedBooks() {
 	    return "Show Loaned Books Stub";
     }
-
+    //todo: fix -1 search
     public String showAuthor(int authorID) {
-	    return "Show Author Stub";
+        String sql = "SELECT author.authorid, name, surname, book_author.isbn, title FROM author\n" +
+                "LEFT JOIN book_author\n" +
+                "ON author.authorid = book_author.authorid\n" +
+                "LEFT JOIN book\n" +
+                "ON book_author.isbn = book.isbn\n" +
+                "WHERE author.authorid = " +  authorID;
+        StringBuilder builder = new StringBuilder("Show Author Stub");
+        try(Statement statement = connection.createStatement()) {
+            String authorname = "unknown";
+            List<String> booksWritten = new ArrayList<>();
+
+            ResultSet resultSet = statement.executeQuery(sql);
+            builder.setLength(0);
+            builder.append("Show Author:\n");
+
+            while(resultSet.next()) {
+                authorname = resultSet.getString(Constants.AUTHOR_NAME).trim()
+                        + " " + resultSet.getString(Constants.AUTHOR_SURNAME).trim();
+                booksWritten.add(
+                        resultSet.getInt(Constants.BOOK_ISBN)
+                        + " - "
+                        + resultSet.getString(Constants.BOOK_TITLE)
+                );
+            }
+        } catch (SQLException e) {
+            System.out.println("Could not look up that authorID");
+            closeDBConnection();
+            e.printStackTrace();
+        }
+
+	    return builder.toString();
     }
     public String showAllAuthors() {
         String sql = "SELECT " + Constants.AUTHOR_NAME + ", " + Constants.AUTHOR_SURNAME + " FROM author";
