@@ -27,6 +27,8 @@ public class LibraryModel {
             } else {
                 System.out.println("Failed to connect to DB.");
             }
+
+            connection.setAutoCommit(false);
         } catch (ClassNotFoundException e) {
             System.out.println("PostgeSQL JDBC Driver was not found");
             e.printStackTrace();
@@ -35,9 +37,8 @@ public class LibraryModel {
             e.printStackTrace();
         }
     }
-    //todo: FIX -1 SEARCH
     public String bookLookup(int isbn) {
-        StringBuilder result = new StringBuilder("Lookup Book Stub");
+        StringBuilder builder = new StringBuilder("Book Lookup:\n");
         String sql = "SELECT * FROM book\n" +
                 "LEFT OUTER JOIN book_author\n" +
                 "ON book.isbn = book_author.isbn\n" +
@@ -54,8 +55,6 @@ public class LibraryModel {
             List<String> authors = new ArrayList<>();
 
             ResultSet resultSet = statement.executeQuery(sql);
-            result.setLength(0);
-            result.append("Book Lookup:\n").append("\t").append(isbn).append(": ");
 
             while (resultSet.next()) {
                 booktitle = resultSet.getString(Constants.BOOK_TITLE);
@@ -65,24 +64,30 @@ public class LibraryModel {
                 authors.add(resultSet.getString(Constants.AUTHOR_SURNAME).trim());
             }
 
-            result.append(booktitle).append('\n')
+            if (numcopies == -1) throw new BookNotFoundException(
+                    "\tBook with isbn: " + isbn + " not found in DB."
+            );
+
+            builder.append("\t").append(isbn).append(": ");
+            builder.append(booktitle).append('\n')
                     .append("\tEdition: ").append(edition_no)
                     .append(" - Number of copies: ").append(numcopies)
                     .append(" - Copies left: ").append(numleft).append('\n');
 
             if (authors.isEmpty()) {
-                result.append("(no authors)");
+                builder.append("(no authors)");
             } else {
-                result.append("\tAuthors: ").append(String.join(", ", authors));
+                builder.append("\tAuthors: ").append(String.join(", ", authors));
             }
 
-            return  result.toString();
+            return  builder.toString();
         } catch (SQLException e) {
-            System.out.println("Could not look up that isbn");
-            closeDBConnection();
+            e.printStackTrace();
+        } catch (BookNotFoundException e) {
+            builder.append(e.getMessage());
             e.printStackTrace();
         }
-        return result.toString();
+        return builder.toString();
     }
     public String showCatalogue() {
         String sql = "SELECT book.isbn, book.title, book.edition_no, book.numofcop, book.numleft, surname, authorseqno FROM book\n" +
@@ -152,9 +157,91 @@ public class LibraryModel {
     }
 
     public String showLoanedBooks() {
-	    return "Show Loaned Books Stub";
+        StringBuilder builder = new StringBuilder();
+        Map<Integer, CatalogueInformation> map = new HashMap<>();
+
+        String sql = "SELECT book.isbn, title, edition_no, numofcop, numleft,\n" +
+                "\tauthor.surname, book_author.authorseqno, \n" +
+                "\tcustomer.customerid, l_name, f_name, city\n" +
+                "FROM book\n" +
+                "LEFT OUTER JOIN book_author\n" +
+                "ON book.isbn = book_author.isbn\n" +
+                "LEFT OUTER JOIN author\n" +
+                "ON book_author.authorid = author.authorid\n" +
+                "INNER JOIN cust_book\n" +
+                "ON book.isbn = cust_book.isbn\n" +
+                "NATURAL JOIN customer;";
+        try(Statement statement = connection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(sql);
+            while(resultSet.next()) {
+                int isbn = resultSet.getInt(Constants.BOOK_ISBN);
+                String title = resultSet.getString(Constants.BOOK_TITLE);
+                int editionNo = resultSet.getInt(Constants.BOOK_EDITION_NUM);
+                int numofcop = resultSet.getInt(Constants.BOOK_NUMBER_COPIES);
+                int numleft = resultSet.getInt(Constants.BOOK_NUM_LEFT);
+
+                CatalogueInformation catalogueInformation = map.getOrDefault(isbn,
+                        new CatalogueInformation(title, editionNo, numofcop, numleft,
+                                new ArrayList<>()));
+
+                String authorSurname = resultSet.getString(Constants.AUTHOR_SURNAME);
+                if (authorSurname == null) authorSurname = "(no authors)";
+
+                int authorseqno = resultSet.getInt(Constants.AUTHOR_AUTHORSEQNO);
+                catalogueInformation.authors().add(new Author(authorSurname, authorseqno));
+
+                int customerId = resultSet.getInt(Constants.CUSTOMER_CUSTOMER_ID);
+                String lName = resultSet.getString(Constants.CUSTOMER_LAST_NAME);
+                String fName = resultSet.getString(Constants.CUSTOMER_FIRST_NAME);
+                String city = resultSet.getString(Constants.CUSTOMER_CITY);
+
+                catalogueInformation.customers().add(
+                        new Customer(customerId, lName, fName, city)
+                );
+                map.put(isbn, catalogueInformation);
+            }
+
+            map.entrySet().stream()
+                    .sorted(Comparator.comparingDouble(Map.Entry::getKey))
+                    .forEach(
+                        entry -> {
+                            CatalogueInformation info = entry.getValue();
+                            int isbn = entry.getKey();
+
+                            builder.append(isbn).append(": ").append(info.title()).append('\n');
+                            builder.append("\tEdition: ").append(info.editionNo())
+                                    .append(" - Number of copies: ").append(info.numofcop())
+                                    .append(" - Copies left: ").append(info.numleft()).append('\n');
+
+                            List<String> authorNames = info.authors().stream()
+                                    .sorted(Comparator.comparingInt(Author::authorseqno))
+                                    .map(Author::surname)
+                                    .map(String::trim)
+                                    .toList();
+
+                            builder.append("\tAuthors: ")
+                                    .append(String.join(", ", authorNames))
+                                    .append('\n');
+
+                            builder.append("\tBorrowers: \n");
+                            info.customers().stream()
+                                    .sorted(Comparator.comparingInt(Customer::customerId))
+                                    .map(Customer::toString)
+                                    .forEach(
+                                        toString -> {
+                                            builder.append("\t\t").append(toString).append('\n');
+                                        }
+                                    );
+
+                        }
+                    );
+
+        } catch (SQLException e) {
+            System.out.println("LOANED BOOKS STATEMENT FAIL");
+            e.printStackTrace();
+        }
+        return builder.toString();
     }
-    //todo: fix -1 search
     public String showAuthor(int authorID) {
         String sql = "SELECT author.authorid, name, surname, book_author.isbn, title FROM author\n" +
                 "LEFT JOIN book_author\n" +
@@ -162,14 +249,12 @@ public class LibraryModel {
                 "LEFT JOIN book\n" +
                 "ON book_author.isbn = book.isbn\n" +
                 "WHERE author.authorid = " +  authorID;
-        StringBuilder builder = new StringBuilder("Show Author Stub");
+        StringBuilder builder = new StringBuilder("Show Author:\n");
         try(Statement statement = connection.createStatement()) {
             String authorname = "unknown";
             List<String> booksWritten = new ArrayList<>();
 
             ResultSet resultSet = statement.executeQuery(sql);
-            builder.setLength(0);
-            builder.append("Show Author:\n");
 
             while(resultSet.next()) {
                 authorname = resultSet.getString(Constants.AUTHOR_NAME).trim()
@@ -183,6 +268,10 @@ public class LibraryModel {
                 booksWritten.add(bookStuff);
             }
 
+            if (authorname.equals("unknown")) throw new AuthorNotFoundException(
+                    "\tAuthor with authorID: " + authorID + " not found"
+            );
+
             builder.append('\t').append(authorID)
                     .append(" - ").append(authorname).append('\n')
                     .append("\tBooks written: \n");
@@ -190,12 +279,13 @@ public class LibraryModel {
             for (String bookStuff: booksWritten) builder.append("\t\t").append(bookStuff).append('\n');
 
         } catch (SQLException e) {
-            System.out.println("Could not look up that authorID");
-            closeDBConnection();
+            e.printStackTrace();
+        } catch (AuthorNotFoundException e) {
+            builder.append(e.getMessage());
             e.printStackTrace();
         }
 
-	    return builder.toString();
+        return builder.toString();
     }
     public String showAllAuthors() {
         String sql = "SELECT * FROM author\n" +
@@ -223,29 +313,85 @@ public class LibraryModel {
 	    return allAuthors.toString();
     }
     public String showCustomer(int customerID) {
-	    return "Show Customer Stub";
-    }
-    public String showAllCustomers() {
-        String sql = "SELECT " + Constants.CUSTOMER_LAST_NAME + ", " +
-                Constants.CUSTOMER_FIRST_NAME + " FROM customer";
-        StringBuilder allCustomers = new StringBuilder("Show All Customers Stub");
+        StringBuilder builder = new StringBuilder("Show customer: \n");
+
+        String sql = "SELECT * FROM customer\n" +
+                "LEFT OUTER JOIN cust_book\n" +
+                "ON customer.customerid = cust_book.customerid\n" +
+                "LEFT OUTER JOIN book\n" +
+                "ON cust_book.isbn = book.isbn\n" +
+                "WHERE customer.customerid = " + customerID;
 
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
-            allCustomers.setLength(0);
+            List<Book> booksBorrowed = new ArrayList<>();
+            Customer customer = null;
+
+            while (resultSet.next()) {
+                String lName = resultSet.getString(Constants.CUSTOMER_LAST_NAME);
+                String fName = resultSet.getString(Constants.CUSTOMER_FIRST_NAME);
+                String city = resultSet.getString(Constants.CUSTOMER_CITY);
+
+                customer = new Customer(customerID, lName, fName, city);
+                int isbn = resultSet.getInt(Constants.BOOK_ISBN);
+                String title = resultSet.getString(Constants.BOOK_TITLE);
+                if (title == null) break;
+                booksBorrowed.add(new Book(isbn, title, -1 , -1, -1));
+            }
+
+            if (customer == null) throw new CustomerNotFoundException(
+                    "\tCould not find customer with id: " + customerID
+            );
+
+            builder.append("\t").append(customer).append('\n')
+                    .append("\tBooks borrowed: \n");
+
+            if (!booksBorrowed.isEmpty()) {
+                booksBorrowed
+                        .forEach(
+                                book -> {
+                                    builder.append("\t\t").append(book.isbn())
+                                            .append(" - ").append(book.title().trim())
+                                            .append('\n');
+                                }
+                        );
+            } else {
+                builder.append("\t\t(no books borrowed)");
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (CustomerNotFoundException e) {
+            builder.append(e.getMessage());
+            e.printStackTrace();
+        }
+        return builder.toString();
+    }
+    public String showAllCustomers() {
+        String sql = "SELECT * FROM CUSTOMER";
+        StringBuilder allCustomers = new StringBuilder("Show All Customers: \n");
+
+        try(Statement statement = connection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(sql);
 
             while(resultSet.next()) {
+                int customerId = resultSet.getInt(Constants.CUSTOMER_CUSTOMER_ID);
                 String lastName = resultSet.getString(Constants.CUSTOMER_LAST_NAME);
                 String firstName = resultSet.getString(Constants.CUSTOMER_FIRST_NAME);
-                allCustomers.append(firstName).append("\t").append(lastName).append('\n');
+                String city = resultSet.getString(Constants.CUSTOMER_CITY);
+
+                if (city == null) city = "(no city)";
+
+                allCustomers.append("\t").append(customerId).append(": ")
+                        .append(lastName.trim()).append(", ").append(firstName.trim()).append(" - ")
+                        .append(city.trim()).append('\n');
             }
         } catch (SQLException e) {
-            System.out.println("Failed to show all customers");
-            closeDBConnection();
             e.printStackTrace();
         }
         return allCustomers.toString();
     }
+    //todo: dialogue box and output when success
     public String borrowBook(int isbn, int customerID,
 			     int day, int month, int year) {
         StringBuilder builder = new StringBuilder();
@@ -373,6 +519,7 @@ public class LibraryModel {
         }
         throw new CustBookNotFoundException("Customer " + customerId + " did not borrow " + isbn);
     }
+    //todo: dialogue box and output when success
     public String returnBook(int isbn, int customerid) {
         StringBuilder builder = new StringBuilder();
         try {
@@ -409,39 +556,42 @@ public class LibraryModel {
             }
         }
     }
-
     public String deleteCus(int customerID) {
         StringBuilder builder = new StringBuilder();
         try {
-            Customer customer = getCustomer(customerID);
             String sql = "DELETE FROM customer \n" +
                     "WHERE customerid = ?;";
             PreparedStatement statement = connection.prepareStatement(sql);
-            statement.setInt(1, customer.customerId());
+            statement.setInt(1, customerID);
 
             boolean worked = statement.executeUpdate() > 0;
-
-            builder.append("Success!");
+            if (!worked) throw new CustomerNotFoundException(
+                    "\tCustomer with customerid: " + customerID + " was not found."
+            );
+            builder.append("\tCustomer with customerid: ").append(customerID)
+                    .append(" has been deleted.");
         } catch (CustomerNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
         } catch (SQLException e) {
-            System.out.println("STATEMENT TO DEL CUSTOMER FAIL");
             e.printStackTrace();
         }
         return builder.toString();
     }
-
     public String deleteAuthor(int authorID) {
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = new StringBuilder("Delete Author: \n");
         try {
-            Author author = getAuthor(authorID);
             String sql = "DELETE FROM author \n" +
                     "WHERE authorid = ?;";
             PreparedStatement statement = connection.prepareStatement(sql);
             statement.setInt(1, authorID);
             boolean worked = statement.executeUpdate() > 0;
-            builder.append("Success!");
+
+            if (!worked) throw new AuthorNotFoundException(
+                    "\tAuthor with authorid: " + authorID + " was not found."
+            );
+            builder.append("\tAuthor with authorid: ").append(authorID)
+                    .append(" has been deleted.");
         } catch (AuthorNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
@@ -452,7 +602,26 @@ public class LibraryModel {
         return builder.toString();
     }
     public String deleteBook(int isbn) {
-        return null;
+        StringBuilder builder = new StringBuilder("Delete Book: \n");
+        try {
+            String sql = "DELETE FROM book \n" +
+                    "WHERE isbn = ?;";
+            PreparedStatement statement = connection.prepareStatement(sql);
+            statement.setInt(1, isbn);
+            boolean worked = statement.executeUpdate() > 0;
+
+            if (!worked) throw new BookNotFoundException("" +
+                    "\tBook with ISBN: " + isbn + " does not seem to exist."
+            );
+            builder.append("\tBook with ISBN: ").append(isbn)
+                    .append(" has been deleted.");
+        } catch (BookNotFoundException e) {
+            builder.append(e.getMessage());
+            e.printStackTrace();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return builder.toString();
     }
     public boolean deleteCustBook(CustBook custBook) throws SQLException {
         String sql = "DELETE FROM cust_book\n" +
@@ -463,10 +632,22 @@ public class LibraryModel {
         return statement.executeUpdate() > 0;
     }
 }
-record CatalogueInformation(String title, int editionNo, int numofcop, int numleft, List<Author> authors) {}
+record CatalogueInformation(String title, int editionNo, int numofcop,
+                            int numleft, List<Author> authors, Set<Customer> customers) {
+    public CatalogueInformation(String title, int editionNo, int numofcop,
+                                int numleft, List<Author> authors) {
+        this(title, editionNo, numofcop, numleft, authors, new HashSet<>());
+    }
+}
 record Author(String surname, int authorseqno) {}
-record Book(int isbn, String title, int editionNo, int numofcop, int numleft) {}
-record Customer(int customerId, String lName, String fName, String city) {}
+record Book(int isbn, String title, int editionNo, int numofcop, int numleft) { }
+record Customer(int customerId, String lName, String fName, String city) {
+    @Override
+    public String toString() {
+        return customerId + ": " + lName.trim() +
+                ", " + fName.trim() + " - " + city.trim();
+    }
+}
 record CustBook(int customerId, java.sql.Date dueDate, int isbn) {}
 class BookNotFoundException extends Exception {
     public BookNotFoundException(String errorMessage) {
