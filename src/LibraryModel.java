@@ -79,9 +79,9 @@ public class LibraryModel {
             } else {
                 builder.append("\tAuthors: ").append(String.join(", ", authors));
             }
-
-            return  builder.toString();
+            connection.commit();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         } catch (BookNotFoundException e) {
             builder.append(e.getMessage());
@@ -147,10 +147,9 @@ public class LibraryModel {
                     }
             );
 
-            resultSet.close();
+            connection.commit();
         } catch (SQLException e) {
-            System.out.println("Failed to show the full catalogue");
-            closeDBConnection();
+            rollBack();
             e.printStackTrace();
         }
 	    return builder.toString();
@@ -235,9 +234,9 @@ public class LibraryModel {
 
                         }
                     );
-
+            connection.commit();
         } catch (SQLException e) {
-            System.out.println("LOANED BOOKS STATEMENT FAIL");
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -277,8 +276,9 @@ public class LibraryModel {
                     .append("\tBooks written: \n");
 
             for (String bookStuff: booksWritten) builder.append("\t\t").append(bookStuff).append('\n');
-
+            connection.commit();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         } catch (AuthorNotFoundException e) {
             builder.append(e.getMessage());
@@ -304,9 +304,9 @@ public class LibraryModel {
                 allAuthors.append('\t').append(authorid).append(": ")
                         .append(name).append(", ").append(surname).append('\n');
             }
+            connection.commit();
         } catch (SQLException e) {
-            System.out.println("Failed to show all authors");
-            closeDBConnection();
+            rollBack();
             e.printStackTrace();
         }
 
@@ -358,8 +358,9 @@ public class LibraryModel {
             } else {
                 builder.append("\t\t(no books borrowed)");
             }
-
+            connection.commit();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         } catch (CustomerNotFoundException e) {
             builder.append(e.getMessage());
@@ -386,7 +387,9 @@ public class LibraryModel {
                         .append(lastName.trim()).append(", ").append(firstName.trim()).append(" - ")
                         .append(city.trim()).append('\n');
             }
+            connection.commit();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         }
         return allCustomers.toString();
@@ -394,34 +397,52 @@ public class LibraryModel {
     //todo: dialogue box and output when success
     public String borrowBook(int isbn, int customerID,
 			     int day, int month, int year) {
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = new StringBuilder("Borrow book: \n\t");
         try {
-            Book book = getBook(isbn);
             Customer customer = getCustomer(customerID);
+            Book book = getBook(isbn);
 
             if(book.numleft() < 1) throw new CannotBorrowBookException();
 
+            lockQuery("LOCK TABLE cust_book IN EXCLUSIVE MODE");
             String insertCustBookString = "INSERT INTO cust_book (isbn, duedate, customerid) " +
                     "VALUES (?, ?, ?);";
-            boolean updateCustBook = updateCustBook(insertCustBookString,
-                    new CustBook(customer.customerId(),
-                            Date.valueOf(LocalDate.of(year, month, day)), isbn));
+            CustBook custBook = new CustBook(customer.customerId(),
+                    Date.valueOf(LocalDate.of(year, month, day)), isbn);
+            boolean updateCustBook = updateCustBook(insertCustBookString, custBook);
+            if (!updateCustBook) throw new SQLException("Could not update borrow book info");
+
+            int response = JOptionPane.showConfirmDialog(dialogParent,
+                    "Locked the tuple(s), ready to update. Click OK to continue.",
+                    "Confirm",
+                    JOptionPane.OK_CANCEL_OPTION);
+            if (response == JOptionPane.OK_CANCEL_OPTION) throw new SQLException(
+                    "User did not want to continue"
+            );
 
             String updateBookString = "UPDATE book SET isbn = ?," + " title = ?, edition_no = ?, " +
                     "numofcop = ?, numleft = ? WHERE isbn = ?";
-            
             boolean updateBook = updateBook(updateBookString,
                     new Book(isbn,
                             book.title(),
                             book.editionNo(),
                             book.numofcop() - 1,
                             book.numleft() - 1));
-            builder.append("Success!");
+            if (!updateBook) throw new SQLException("Could not update book information");
+
+            builder.append("Book: ").append(isbn).append("(").append(book.title().trim()).
+                    append(")\n").append("\tLoaned to: ").append(customer.customerId()).
+                    append("(").append(customer.fName().trim()).append(" ")
+                    .append(customer.lName().trim()).append(")\n").append("\tDue date: ")
+                    .append(custBook.dueDate().toString().trim());
+            connection.commit();
         } catch (BookNotFoundException | CustomerNotFoundException | CannotBorrowBookException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
         } catch (SQLException e) {
             builder.append("Could not insert into the DB");
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -445,7 +466,7 @@ public class LibraryModel {
     }
     public Book getBook(int isbn) throws BookNotFoundException {
         String sql = "SELECT * FROM book\n" +
-                "WHERE isbn = " + isbn;
+                "WHERE isbn = " + isbn + " FOR UPDATE;";
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
             if (resultSet.next()) {
@@ -466,7 +487,7 @@ public class LibraryModel {
     }
     public Customer getCustomer(int customerId) throws CustomerNotFoundException {
         String sql = "SELECT * FROM customer\n" +
-                "WHERE customerid = " + customerId;
+                "WHERE customerid = " + customerId + " FOR UPDATE;";
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
             if (resultSet.next()) {
@@ -486,7 +507,7 @@ public class LibraryModel {
     }
     public Author getAuthor(int authorId) throws AuthorNotFoundException {
         String sql = "SELECT * FROM author\n" +
-                "WHERE authorid = " + authorId;
+                "WHERE authorid = " + authorId + " FOR UPDATE;";
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
             if (resultSet.next()) {
@@ -503,7 +524,7 @@ public class LibraryModel {
     }
     public CustBook getCustBook(int customerId, int isbn) throws CustBookNotFoundException {
         String sql = "SELECT * FROM cust_book\n" +
-                "WHERE isbn = " + isbn + " AND customerid = " + customerId;
+                "WHERE isbn = " + isbn + " AND customerid = " + customerId + " FOR UPDATE;";
         try(Statement statement = connection.createStatement()) {
             ResultSet resultSet = statement.executeQuery(sql);
             if (resultSet.next()) {
@@ -521,15 +542,16 @@ public class LibraryModel {
     }
     //todo: dialogue box and output when success
     public String returnBook(int isbn, int customerid) {
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = new StringBuilder("Return book: \n");
         try {
             CustBook custBook = getCustBook(customerid, isbn);
             Book book = getBook(isbn);
+
             boolean deleted = deleteCustBook(custBook);
+            if (!deleted) throw  new SQLException("Did not delete book correctly.");
 
             String sql = "UPDATE book SET isbn = ?," + " title = ?, edition_no = ?, " +
                     "numofcop = ?, numleft = ? WHERE isbn = ?";
-
             boolean updated = updateBook(sql, new Book(
                     book.isbn(),
                     book.title(),
@@ -537,12 +559,17 @@ public class LibraryModel {
                     book.numofcop() + 1,
                     book.numleft() + 1
             ));
-            builder.append("Success!");
+
+            if (!updated) throw new SQLException("Did not update book correctly.");
+            builder.append("\t Book ").append(isbn)
+                    .append(" returned for customer ").append(customerid);
+
         } catch (CustBookNotFoundException | BookNotFoundException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
         } catch (SQLException e) {
-            System.out.println("DELETE BOOK HAS STACKTRACE");
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -570,10 +597,12 @@ public class LibraryModel {
             );
             builder.append("\tCustomer with customerid: ").append(customerID)
                     .append(" has been deleted.");
+            connection.commit();
         } catch (CustomerNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -592,11 +621,12 @@ public class LibraryModel {
             );
             builder.append("\tAuthor with authorid: ").append(authorID)
                     .append(" has been deleted.");
+            connection.commit();
         } catch (AuthorNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
         } catch (SQLException e) {
-            System.out.println("STATEMENT FAIL AUTHOR");
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -615,10 +645,12 @@ public class LibraryModel {
             );
             builder.append("\tBook with ISBN: ").append(isbn)
                     .append(" has been deleted.");
+            connection.commit();
         } catch (BookNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
         } catch (SQLException e) {
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -630,6 +662,17 @@ public class LibraryModel {
         statement.setInt(1, custBook.isbn());
         statement.setInt(2, custBook.customerId());
         return statement.executeUpdate() > 0;
+    }
+    public void lockQuery(String sql) throws SQLException {
+        PreparedStatement statement = connection.prepareStatement(sql);
+        statement.execute();
+    }
+    private void rollBack() {
+        try {
+            connection.rollback();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 }
 record CatalogueInformation(String title, int editionNo, int numofcop,
