@@ -154,7 +154,6 @@ public class LibraryModel {
         }
 	    return builder.toString();
     }
-
     public String showLoanedBooks() {
         StringBuilder builder = new StringBuilder();
         Map<Integer, CatalogueInformation> map = new HashMap<>();
@@ -404,7 +403,6 @@ public class LibraryModel {
 
             if(book.numleft() < 1) throw new CannotBorrowBookException();
 
-            lockQuery("LOCK TABLE cust_book IN EXCLUSIVE MODE");
             String insertCustBookString = "INSERT INTO cust_book (isbn, duedate, customerid) " +
                     "VALUES (?, ?, ?);";
             CustBook custBook = new CustBook(customer.customerId(),
