@@ -1,8 +1,10 @@
 /*
  * LibraryModel.java
- * Author:
- * Created on:
+ * Author: Tyff Habwe
+ * Created on: 01/06/2024
  */
+
+import org.postgresql.util.PSQLException;
 
 import javax.swing.*;
 import java.sql.*;
@@ -61,7 +63,11 @@ public class LibraryModel {
                 edition_no = resultSet.getInt(Constants.BOOK_EDITION_NUM);
                 numcopies = resultSet.getInt(Constants.BOOK_NUMBER_COPIES);
                 numleft = resultSet.getInt(Constants.BOOK_NUM_LEFT);
-                authors.add(resultSet.getString(Constants.AUTHOR_SURNAME).trim());
+
+                String author = resultSet.getString(Constants.AUTHOR_SURNAME);
+                if (author == null) author = "(no authors)";
+
+                authors.add(author.trim());
             }
 
             if (numcopies == -1) throw new BookNotFoundException(
@@ -86,6 +92,7 @@ public class LibraryModel {
         } catch (BookNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
+            rollBack();
         }
         return builder.toString();
     }
@@ -191,7 +198,9 @@ public class LibraryModel {
                 int customerId = resultSet.getInt(Constants.CUSTOMER_CUSTOMER_ID);
                 String lName = resultSet.getString(Constants.CUSTOMER_LAST_NAME);
                 String fName = resultSet.getString(Constants.CUSTOMER_FIRST_NAME);
+
                 String city = resultSet.getString(Constants.CUSTOMER_CITY);
+                if (city == null) city = "(no city)";
 
                 catalogueInformation.customers().add(
                         new Customer(customerId, lName, fName, city)
@@ -281,6 +290,7 @@ public class LibraryModel {
             e.printStackTrace();
         } catch (AuthorNotFoundException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
         }
 
@@ -329,7 +339,9 @@ public class LibraryModel {
             while (resultSet.next()) {
                 String lName = resultSet.getString(Constants.CUSTOMER_LAST_NAME);
                 String fName = resultSet.getString(Constants.CUSTOMER_FIRST_NAME);
+
                 String city = resultSet.getString(Constants.CUSTOMER_CITY);
+                if (city == null) city = "(no city)";
 
                 customer = new Customer(customerID, lName, fName, city);
                 int isbn = resultSet.getInt(Constants.BOOK_ISBN);
@@ -363,6 +375,7 @@ public class LibraryModel {
             e.printStackTrace();
         } catch (CustomerNotFoundException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
         }
         return builder.toString();
@@ -393,7 +406,6 @@ public class LibraryModel {
         }
         return allCustomers.toString();
     }
-    //todo: dialogue box and output when success
     public String borrowBook(int isbn, int customerID,
 			     int day, int month, int year) {
         StringBuilder builder = new StringBuilder("Borrow book: \n\t");
@@ -424,7 +436,7 @@ public class LibraryModel {
                     new Book(isbn,
                             book.title(),
                             book.editionNo(),
-                            book.numofcop() - 1,
+                            book.numofcop(),
                             book.numleft() - 1));
             if (!updateBook) throw new SQLException("Could not update book information");
 
@@ -439,7 +451,7 @@ public class LibraryModel {
             rollBack();
             e.printStackTrace();
         } catch (SQLException e) {
-            builder.append("Could not insert into the DB");
+            builder.append("Cannot borrow this book. Customer likely already has this book on loan");
             rollBack();
             e.printStackTrace();
         }
@@ -478,7 +490,7 @@ public class LibraryModel {
             }
         } catch (SQLException e) {
             System.out.println("GET BOOK QUERY STATEMENT FAILED!");
-            closeDBConnection();
+            rollBack();
             e.printStackTrace();
         }
         throw new BookNotFoundException("Could not find that book");
@@ -497,11 +509,10 @@ public class LibraryModel {
                 );
             }
         } catch (SQLException e) {
-            System.out.println("GET CUSTOMER QUERY STATEMENT FAILED!");
-            closeDBConnection();
+            rollBack();
             e.printStackTrace();
         }
-        throw new NoSuchElementException("Could not find customer customerId: " + customerId);
+        throw new CustomerNotFoundException("Could not find customer customerId: " + customerId);
     }
     public Author getAuthor(int authorId) throws AuthorNotFoundException {
         String sql = "SELECT * FROM author\n" +
@@ -515,7 +526,7 @@ public class LibraryModel {
                 );
             }
         } catch (SQLException e) {
-            System.out.println("STATEMENT FAIL AUTHOR PRINT");
+            rollBack();
             e.printStackTrace();
         }
         throw new AuthorNotFoundException("Did not find Author " + authorId);
@@ -533,12 +544,10 @@ public class LibraryModel {
                 );
             }
         } catch (SQLException e) {
-            System.out.println("CUST BOOK QUERY FAILED");
             e.printStackTrace();
         }
         throw new CustBookNotFoundException("Customer " + customerId + " did not borrow " + isbn);
     }
-    //todo: dialogue box and output when success
     public String returnBook(int isbn, int customerid) {
         StringBuilder builder = new StringBuilder("Return book: \n");
         try {
@@ -546,7 +555,7 @@ public class LibraryModel {
             Book book = getBook(isbn);
 
             boolean deleted = deleteCustBook(custBook);
-            if (!deleted) throw  new SQLException("Did not delete book correctly.");
+            if (!deleted) throw new SQLException("Did not delete anything from cust_book");
 
             String sql = "UPDATE book SET isbn = ?," + " title = ?, edition_no = ?, " +
                     "numofcop = ?, numleft = ? WHERE isbn = ?";
@@ -554,7 +563,7 @@ public class LibraryModel {
                     book.isbn(),
                     book.title(),
                     book.editionNo(),
-                    book.numofcop() + 1,
+                    book.numofcop(),
                     book.numleft() + 1
             ));
 
@@ -591,7 +600,8 @@ public class LibraryModel {
 
             boolean worked = statement.executeUpdate() > 0;
             if (!worked) throw new CustomerNotFoundException(
-                    "\tCustomer with customerid: " + customerID + " was not found."
+                    "\tCustomer with customerid: " + customerID + " could not be deleted." +
+                            "Likely could not be found."
             );
             builder.append("\tCustomer with customerid: ").append(customerID)
                     .append(" has been deleted.");
@@ -599,6 +609,9 @@ public class LibraryModel {
         } catch (CustomerNotFoundException e) {
             builder.append(e.getMessage());
             e.printStackTrace();
+        } catch (PSQLException ps) {
+            builder.append("Could not delete customer. Likely borrowed a book");
+            ps.printStackTrace();
         } catch (SQLException e) {
             rollBack();
             e.printStackTrace();
@@ -622,7 +635,12 @@ public class LibraryModel {
             connection.commit();
         } catch (AuthorNotFoundException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
+        } catch (PSQLException ps) {
+            builder.append("Could not delete author. Likely wrote a book");
+            rollBack();
+            ps.printStackTrace();
         } catch (SQLException e) {
             rollBack();
             e.printStackTrace();
@@ -646,7 +664,12 @@ public class LibraryModel {
             connection.commit();
         } catch (BookNotFoundException e) {
             builder.append(e.getMessage());
+            rollBack();
             e.printStackTrace();
+        } catch (PSQLException ps) {
+            builder.append("Could not delete book. Likely has been borrowed");
+            rollBack();
+            ps.printStackTrace();
         } catch (SQLException e) {
             rollBack();
             e.printStackTrace();
@@ -660,10 +683,6 @@ public class LibraryModel {
         statement.setInt(1, custBook.isbn());
         statement.setInt(2, custBook.customerId());
         return statement.executeUpdate() > 0;
-    }
-    public void lockQuery(String sql) throws SQLException {
-        PreparedStatement statement = connection.prepareStatement(sql);
-        statement.execute();
     }
     private void rollBack() {
         try {
